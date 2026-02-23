@@ -239,10 +239,12 @@ class OutputFormatter:
                 stripped = line.strip()
                 if stripped.startswith('##'):  # Next section
                     break
+                if '```' in stripped:  # Skip code blocks entirely
+                    break
                 if stripped.startswith('-') or stripped.startswith('*'):
                     # Clean up bullet points
                     cleaned = stripped.lstrip('-*').strip()
-                    if cleaned and not cleaned.startswith('**'):
+                    if cleaned and not cleaned.startswith('**') and '`' not in cleaned[:3]:
                         # Further clean up bold markers
                         cleaned = cleaned.replace('**', '')
                         remediation.append(f"- {cleaned}")

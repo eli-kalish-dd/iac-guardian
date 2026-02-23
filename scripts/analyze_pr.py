@@ -285,6 +285,13 @@ Instructions:
 ## What To Do
 [1-2 bullet points. Be specific: e.g. add the probe config, set replicas to N, add PDB with minAvailable, restrict CIDR to VPN range, or right-size to X instance type saving $Y/mo.]
 
+Risk level calibration:
+- CRITICAL: Immediate production outage (traffic will exceed capacity and crash) OR immediate security exposure (port open to 0.0.0.0/0)
+- HIGH: Could cause downtime under specific conditions (missing PDB on HA service, insufficient replicas, missing health probes)
+- MEDIUM: Suboptimal but not immediately dangerous (cost waste, missing observability)
+- LOW: Best-practice violation with minimal near-term risk
+
+IMPORTANT: Do NOT use code blocks (```) in the What To Do section. Plain text bullets only.
 Keep it SHORT. A busy engineer needs to understand in 10 seconds.
 """
 
@@ -400,6 +407,13 @@ Analyze this infrastructure change and provide a CRISP, SHORT analysis in exactl
 ## What To Do
 [1-2 bullet points max. Be specific: e.g. add the probe config, set replicas to N, add PDB with minAvailable, restrict CIDR to VPN range, or right-size to X instance type saving $Y/mo.]
 
+Risk level calibration:
+- CRITICAL: Immediate production outage (traffic will exceed capacity and crash) OR immediate security exposure (port open to 0.0.0.0/0)
+- HIGH: Could cause downtime under specific conditions (missing PDB on HA service, insufficient replicas, missing health probes)
+- MEDIUM: Suboptimal but not immediately dangerous (cost waste, missing observability)
+- LOW: Best-practice violation with minimal near-term risk
+
+IMPORTANT: Do NOT use code blocks (```) in the What To Do section. Plain text bullets only.
 Keep it SHORT and PUNCHY. A busy engineer needs to understand in 10 seconds.
 """
 
