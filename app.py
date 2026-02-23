@@ -25,7 +25,7 @@ from metrics_emitter import emit_analysis_metrics, infer_category, infer_cost_sa
 
 # Page config
 st.set_page_config(
-    page_title="IaC Guardian",
+    page_title="Datadog IaC Proactive Detection",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -34,41 +34,53 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 3rem;
-        font-weight: bold;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
-    .sub-header {
-        text-align: center;
-        color: #666;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    .risk-high {
-        background: #ffebee;
-        border-left: 4px solid #f44336;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-    .risk-medium {
-        background: #fff3e0;
-        border-left: 4px solid #ff9800;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-    .risk-low {
-        background: #e8f5e9;
-        border-left: 4px solid #4caf50;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Roboto+Mono&display=swap');
+
+* { font-family: 'Noto Sans', sans-serif; }
+
+.main-header {
+    font-size: 2.4rem;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 0.5rem;
+    color: #632CA6;
+    letter-spacing: -0.5px;
+}
+.sub-header {
+    text-align: center;
+    color: #6B6B8A;
+    margin-bottom: 2rem;
+    font-size: 1rem;
+}
+.metric-card {
+    background: #F5F5FA;
+    padding: 1rem;
+    border-radius: 6px;
+    margin: 0.5rem 0;
+    border-left: 3px solid #632CA6;
+}
+.risk-high {
+    background: #FFF0F3;
+    border-left: 4px solid #E63244;
+    padding: 1rem;
+    margin: 1rem 0;
+    border-radius: 4px;
+}
+.risk-medium {
+    background: #FFF8ED;
+    border-left: 4px solid #FCB429;
+    padding: 1rem;
+    margin: 1rem 0;
+    border-radius: 4px;
+}
+.risk-low {
+    background: #EDFAF2;
+    border-left: 4px solid #19AA4F;
+    padding: 1rem;
+    margin: 1rem 0;
+    border-radius: 4px;
+}
+code, pre { font-family: 'Roboto Mono', monospace !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -91,7 +103,7 @@ def create_cpu_chart(k8s_metrics):
         name='Current Average',
         x=['CPU Utilization'],
         y=[current_cpu],
-        marker_color='lightblue',
+        marker_color='#9B6DC5',
         text=[f'{current_cpu}%'],
         textposition='auto',
     ))
@@ -100,7 +112,7 @@ def create_cpu_chart(k8s_metrics):
         name='Peak (Last 7 Days)',
         x=['CPU Utilization'],
         y=[peak_cpu],
-        marker_color='coral',
+        marker_color='#2E6DFE',
         text=[f'{peak_cpu}%'],
         textposition='auto',
     ))
@@ -110,7 +122,10 @@ def create_cpu_chart(k8s_metrics):
         yaxis_title='Percentage',
         yaxis_range=[0, 100],
         height=300,
-        showlegend=True
+        showlegend=True,
+        paper_bgcolor='#FAFAFA',
+        plot_bgcolor='#FAFAFA',
+        font=dict(family='Noto Sans', color='#1A1A2E'),
     )
 
     return fig
@@ -135,7 +150,7 @@ def create_replica_chart(k8s_metrics):
         y=replicas,
         mode='lines+markers',
         name='Active Replicas',
-        line=dict(color='blue', width=2),
+        line=dict(color='#632CA6', width=2),
         marker=dict(size=8)
     ))
 
@@ -143,7 +158,7 @@ def create_replica_chart(k8s_metrics):
     fig.add_hline(
         y=peak.get('replicas_active', 18),
         line_dash="dash",
-        line_color="red",
+        line_color="#E63244",
         annotation_text=f"Peak: {peak.get('replicas_active', 18)} replicas"
     )
 
@@ -152,7 +167,10 @@ def create_replica_chart(k8s_metrics):
         xaxis_title='Date',
         yaxis_title='Replicas',
         height=300,
-        showlegend=True
+        showlegend=True,
+        paper_bgcolor='#FAFAFA',
+        plot_bgcolor='#FAFAFA',
+        font=dict(family='Noto Sans', color='#1A1A2E'),
     )
 
     return fig
@@ -185,7 +203,7 @@ def create_traffic_chart(k8s_metrics):
         mode='lines',
         fill='tozeroy',
         name='Requests/min',
-        line=dict(color='purple', width=2)
+        line=dict(color='#632CA6', width=2)
     ))
 
     fig.update_layout(
@@ -193,7 +211,10 @@ def create_traffic_chart(k8s_metrics):
         xaxis_title='Hour of Day',
         yaxis_title='Requests/min',
         height=300,
-        showlegend=True
+        showlegend=True,
+        paper_bgcolor='#FAFAFA',
+        plot_bgcolor='#FAFAFA',
+        font=dict(family='Noto Sans', color='#1A1A2E'),
     )
 
     return fig
@@ -206,7 +227,7 @@ def create_cost_chart(infra_metrics):
 
     options = ['Current', 'Proposed', 'Recommended']
     costs = [4200, 33600, 10080]
-    colors = ['green', 'red', 'orange']
+    colors = ['#19AA4F', '#E63244', '#FCB429']
 
     fig = go.Figure()
 
@@ -222,7 +243,10 @@ def create_cost_chart(infra_metrics):
         title='Monthly Cost Comparison',
         yaxis_title='Cost (USD/month)',
         height=350,
-        showlegend=False
+        showlegend=False,
+        paper_bgcolor='#FAFAFA',
+        plot_bgcolor='#FAFAFA',
+        font=dict(family='Noto Sans', color='#1A1A2E'),
     )
 
     return fig
@@ -230,9 +254,9 @@ def create_cost_chart(infra_metrics):
 
 def main():
     # Header
-    st.markdown('<div class="main-header">🛡️ IaC Guardian</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🛡️ Datadog IaC Proactive Detection</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="sub-header">AI-Powered Infrastructure Analysis • Powered by Claude & Datadog</div>',
+        '<div class="sub-header">Proactively detect and remediate risky infrastructure changes before they are deployed to production — powered by Claude</div>',
         unsafe_allow_html=True
     )
 
