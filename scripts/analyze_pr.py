@@ -274,10 +274,10 @@ Instructions:
 ## Risk Level: [CRITICAL/HIGH/MEDIUM/LOW]
 
 ## Why This is Risky
-[1-2 sentences. Be specific with metric numbers. What will break?]
+[1-2 sentences. Rules: (a) For cost changes, always state the actual $/month before and after using real EC2/cloud pricing — e.g. "5x c5.2xlarge = $1,680/mo → 10x c5.4xlarge = $6,720/mo, a $5,040/mo increase". (b) If Datadog has no metrics for the affected service, say "Datadog has no CPU/memory data for <service> — there is no evidence current capacity is under load, so this increase is unvalidated." Never use the phrase "zero telemetry" alone.]
 
 ## What To Do
-[1-2 bullet points. Clear action items.]
+[1-2 bullet points. Be specific: name the right instance type/count, give the $ saving, or name what to instrument in Datadog first.]
 
 Keep it SHORT. A busy engineer needs to understand in 10 seconds.
 """
@@ -383,12 +383,12 @@ Analyze this infrastructure change and provide a CRISP, SHORT analysis in exactl
 ## Risk Level: [CRITICAL/HIGH/MEDIUM/LOW]
 
 ## Why This is Risky
-[1-2 sentences max. Be specific with numbers from the metrics. What will break?]
+[1-2 sentences max. Rules: (a) For cost changes, always state the actual $/month before and after using real EC2/cloud pricing — e.g. "5x c5.2xlarge = $1,680/mo → 10x c5.4xlarge = $6,720/mo, a $5,040/mo increase". (b) If Datadog has no metrics for the affected service, say "Datadog has no CPU/memory data for <service> — there is no evidence current capacity is under load, so this increase is unvalidated." Never use the phrase "zero telemetry" alone.]
 
 ## What To Do
-[1-2 bullet points max. Clear action items.]
+[1-2 bullet points max. Be specific: name the right instance type/count, give the $ saving, or name what to instrument in Datadog first.]
 
-Keep it SHORT and PUNCHY. Like a busy engineer needs to understand in 10 seconds.
+Keep it SHORT and PUNCHY. A busy engineer needs to understand in 10 seconds.
 """
 
     try:
