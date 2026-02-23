@@ -37,7 +37,7 @@
             DATADOG_APP_KEY: ${{ secrets.DATADOG_APP_KEY }}
             GITHUB_ACTIONS: true
           run: |
-            git diff origin/main...HEAD > changes.diff
+            git diff origin/main...HEAD -- '*.yaml' '*.yml' '*.tf' '*.tfvars' > changes.diff
             python scripts/analyze_pr.py changes.diff > analysis.txt || true
             cat analysis.txt
 

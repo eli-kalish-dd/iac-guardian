@@ -213,9 +213,9 @@ class OutputFormatter:
         reason = ' '.join(reason_lines) if reason_lines else "Infrastructure change detected with potential risk."
 
         # Truncate if too long
-        if len(reason) > 250:
+        if len(reason) > 400:
             # Try to end at a sentence
-            truncated = reason[:247]
+            truncated = reason[:397]
             last_period = truncated.rfind('.')
             if last_period > 150:
                 reason = truncated[:last_period+1]
