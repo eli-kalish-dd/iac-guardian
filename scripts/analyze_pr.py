@@ -410,13 +410,23 @@ Analyze this infrastructure change:
 - m5.xlarge: $154/mo  m5.2xlarge: $308/mo  m5.4xlarge: $616/mo
 - c5.xlarge: $124/mo  c5.2xlarge: $248/mo  c5.4xlarge: $496/mo  c5.9xlarge: $1,117/mo
 
-Instructions:
-1. For replica count changes: call BOTH get_deployment_replicas AND get_cpu_pressure. You must do the math explicitly: if current pods use Xm CPU avg per pod and replicas drop from N to M, each remaining pod absorbs (N/M)× the traffic → approximately X×(N/M)m CPU per pod. Compare that to the CPU limit. Include the actual numbers in your analysis.
-2. For HPA maxReplicas changes: call get_deployment_replicas to get current running pod count. If current running pods > proposed maxReplicas, this is CRITICAL — the cluster will immediately evict pods to enforce the ceiling, reducing capacity below what live traffic currently requires.
-3. For memory limit changes: call get_memory_pressure. Include actual MiB usage and the proposed limit so the headroom (or lack of it) is visible.
-4. For CPU limit changes: call get_cpu_pressure. Include avg/peak millicores and compare to proposed limit.
-5. For EC2/instance count changes: call get_cloud_costs for CCM context, then use the pricing table for the before/after delta.
-6. For missing health probes: call get_deployment_health to fetch restart count. If restarts > 0, include them: "DD shows N container restarts in 24h for this service — without readiness probes, those restarts silently keep unhealthy pods in rotation." For missing PDB/limits: no tool call needed — explain the K8s failure mode directly.
+Instructions — fetch Datadog data using whatever query tools are available to you:
+
+1. For replica count changes: fetch BOTH of these metrics for <deployment_name>, last 24h:
+   - Replica count: avg:kubernetes_state.deployment.replicas_available{kube_deployment:<name>}
+   - CPU usage: avg:kubernetes.cpu.usage.total{kube_deployment:<name>} (nanocores — divide by 1e6 for millicores)
+   Do the math: if pods use Xm CPU avg at N replicas, dropping to M means X×(N/M)m per pod. Compare to the CPU limit.
+
+2. For HPA maxReplicas changes: fetch avg:kubernetes_state.deployment.replicas_available{kube_deployment:<name>}. If current running pods > proposed maxReplicas, flag CRITICAL — the ceiling is below live traffic.
+
+3. For memory limit changes: fetch avg:kubernetes.memory.usage{kube_deployment:<name>} (bytes — divide by 1048576 for MiB) and avg:kubernetes.memory.limits{kube_deployment:<name>}. Show headroom = limit − avg usage.
+
+4. For CPU limit changes: fetch avg:kubernetes.cpu.usage.total{kube_deployment:<name>} (nanocores → millicores) and avg:kubernetes.cpu.limits{kube_deployment:<name>} (cores → multiply by 1000 for millicores). Compare avg/peak to proposed limit.
+
+5. For EC2/instance count changes: fetch cloud cost data (e.g. aws.cost.net.amortized or all.cost, last 7 days, sum rolled up daily). Then use the pricing table for before/after delta.
+
+6. For missing health probes: fetch sum:kubernetes.containers.restarts{kube_deployment:<name>} last 24h. If restarts > 0, cite the number. For missing PDB/limits: no query needed — explain the K8s failure mode directly.
+
 7. Respond in EXACTLY this 4-section format. Each section is mandatory.
 
 ## Risk Level: [CRITICAL/HIGH/MEDIUM/LOW]
@@ -464,11 +474,33 @@ IMPORTANT: Do NOT use code blocks (```) in any section. Plain text only.
 Keep it SHORT. A busy engineer needs to understand in 10 seconds.
 """
 
-    # Multi-turn tool-use loop with DatadogAPIClient (real DD API).
-    # The official DD MCP URL path (mcp.datadoghq.com) exposes different tool names
-    # (get_datadog_metric etc.) that don't match our _DD_TOOLS definitions, causing Claude
-    # to report "no data" even when metrics exist. The tool-use loop below calls the real
-    # DD API directly via our custom tool wrappers and is the reliable path.
+    # Try: official Datadog MCP server via Anthropic API URL-type MCP beta.
+    # The prompt uses raw DD metric query strings (not custom tool names) so Claude
+    # can use whichever query tool the MCP server exposes.
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.beta.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+            mcp_servers=[{"type": "url", "url": DD_MCP_URL, "name": "datadog",
+                          "authorization_token": os.getenv("DATADOG_API_KEY", "")}],
+            betas=["mcp-client-2025-04-04"],
+        )
+        analysis_text = next(
+            (b.text for b in reversed(response.content) if hasattr(b, "text")), ""
+        )
+        # Only accept if it contains real data markers, not a "no metrics" fallback
+        no_data_phrases = ["no metrics", "no data", "cannot confirm", "datadog has no"]
+        if analysis_text and not any(p in analysis_text.lower() for p in no_data_phrases):
+            return {"analysis": analysis_text, "data_source": "mcp"}
+        if os.getenv('GITHUB_ACTIONS') != 'true':
+            print("⚠️  DD MCP URL returned no-data response, trying tool-use fallback")
+    except Exception as e:
+        if os.getenv('GITHUB_ACTIONS') != 'true':
+            print(f"⚠️  DD MCP URL failed ({e}), trying tool-use fallback")
+
+    # Fallback: multi-turn tool-use loop with DatadogAPIClient (real DD API)
     try:
         client = anthropic.Anthropic(api_key=api_key)
         messages = [{"role": "user", "content": prompt}]
