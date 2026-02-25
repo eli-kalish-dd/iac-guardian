@@ -416,7 +416,7 @@ Instructions:
 3. For memory limit changes: call get_memory_pressure. Include actual MiB usage and the proposed limit so the headroom (or lack of it) is visible.
 4. For CPU limit changes: call get_cpu_pressure. Include avg/peak millicores and compare to proposed limit.
 5. For EC2/instance count changes: call get_cloud_costs for CCM context, then use the pricing table for the before/after delta.
-6. For missing probes/PDB/limits: no Datadog tool call needed — explain the K8s failure mode directly.
+6. For missing health probes: call get_deployment_health to fetch restart count. If restarts > 0, include them: "DD shows N container restarts in 24h for this service — without readiness probes, those restarts silently keep unhealthy pods in rotation." For missing PDB/limits: no tool call needed — explain the K8s failure mode directly.
 7. Respond in EXACTLY this 4-section format. Each section is mandatory.
 
 ## Risk Level: [CRITICAL/HIGH/MEDIUM/LOW]
@@ -435,10 +435,10 @@ Examples:
 Rules by type:
 - Replica reduction: MUST include the actual DD numbers. Format: "Datadog shows [service] pods using [X]m CPU avg / [Y]m peak at [N] replicas. Cutting to [M] replicas means [N/M]× the traffic per pod — approximately [X×N/M]m CPU per pod vs the [limit]m limit." Do the math. Do not say "225 replicas suggests high load" — that's circular. Cite the measured CPU/memory.
 - HPA maxReplicas reduction: "Datadog shows [service] currently running [N] pods. The proposed maxReplicas of [M] would immediately evict [N-M] pods to enforce the ceiling — capacity drops below current live traffic before any scale-down is validated."
-- Cost over-provision: "Datadog shows the current fleet runs at X% avg CPU / Y% peak — well below the ~70% threshold where additional capacity helps. This change adds 4× capacity for demand that doesn't exist."
+- Cost over-provision: Lead with CCM spend from get_cloud_costs. Format: "Datadog CCM shows current EC2 spend at $X/mo. This change adds [N] larger instances, increasing the fleet cost to ~$Y/mo (+$Z/mo, +P%). No load event or capacity alert justifies the increase." Do NOT claim CPU utilization % — we don't have EC2 host CPU metrics in scope.
 - Memory limit: "Datadog shows pods using ~XMiB avg — the proposed YMi limit leaves only ZMiB headroom. Any GC pause or traffic spike triggers OOMKill across all N pods."
 - CPU limit: "Datadog shows [X]m avg / [Y]m peak CPU per pod. The proposed [Z]m limit means pods hit the throttle ceiling at normal load, not just spikes — latency increases immediately."
-- Missing health probes: "Without liveness/readiness probes, Kubernetes cannot detect stuck or crashed containers, so broken pods stay in the load balancer rotation and receive live traffic."
+- Missing health probes: Lead with DD restart data if available: "Datadog shows [N] container restarts in the last 24h for [service]. Without readiness probes, those restarts silently keep unhealthy pods in the load balancer rotation — traffic hits pods that are mid-crash." If no restart data: "Without readiness probes, Kubernetes cannot detect stuck or crashed containers, so broken pods stay in the load balancer rotation and receive live traffic."
 - Missing PDB: "Without a PodDisruptionBudget, a node drain or rolling deploy can evict all N pods at once — full service outage for the duration."
 - Missing resource limits: "Without CPU/memory limits, this pod can consume the entire node's resources, starving every other pod on the node and triggering cascading evictions."
 - Security group: "SSH (port 22) is now exposed to every IP on the internet, not just internal VPN range."
