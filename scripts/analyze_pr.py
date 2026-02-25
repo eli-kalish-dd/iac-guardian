@@ -65,6 +65,11 @@ def parse_diff(diff_file: str) -> Dict[str, any]:
     if memory_limit_changes:
         changes['memory_limit_changes'] = memory_limit_changes
 
+    # Extract HPA maxReplicas changes
+    hpa_changes = re.findall(r'[-+]\s*maxReplicas:\s*(\d+)', diff_content)
+    if hpa_changes:
+        changes['hpa_changes'] = hpa_changes
+
     return changes
 
 
@@ -381,6 +386,8 @@ def analyze_with_mcp(changes: Dict) -> Dict:
     diff_summary = f"Files changed: {len(changes['files'])}"
     if changes.get('replica_changes'):
         diff_summary += f"\nReplica count changes: {changes['replica_changes']}"
+    if changes.get('hpa_changes'):
+        diff_summary += f"\nHPA maxReplicas changes: {changes['hpa_changes']}"
     if changes.get('instance_type_changes'):
         diff_summary += f"\nInstance type changes: {changes['instance_type_changes']}"
     if changes.get('count_changes'):
@@ -404,10 +411,13 @@ Analyze this infrastructure change:
 - c5.xlarge: $124/mo  c5.2xlarge: $248/mo  c5.4xlarge: $496/mo  c5.9xlarge: $1,117/mo
 
 Instructions:
-1. For K8s changes: call get_deployment_replicas / get_deployment_health / get_pdb_status / get_hpa_status / get_memory_pressure / get_cpu_pressure as appropriate.
-2. For EC2/instance count changes: call get_cloud_costs for CCM context, then use the pricing table for the before/after delta.
-3. For security group changes: no tool call needed — assess from the diff directly.
-4. Respond in EXACTLY this 4-section format. Each section is mandatory.
+1. For replica count changes: call BOTH get_deployment_replicas AND get_cpu_pressure. You must do the math explicitly: if current pods use Xm CPU avg per pod and replicas drop from N to M, each remaining pod absorbs (N/M)× the traffic → approximately X×(N/M)m CPU per pod. Compare that to the CPU limit. Include the actual numbers in your analysis.
+2. For HPA maxReplicas changes: call get_deployment_replicas to get current running pod count. If current running pods > proposed maxReplicas, this is CRITICAL — the cluster will immediately evict pods to enforce the ceiling, reducing capacity below what live traffic currently requires.
+3. For memory limit changes: call get_memory_pressure. Include actual MiB usage and the proposed limit so the headroom (or lack of it) is visible.
+4. For CPU limit changes: call get_cpu_pressure. Include avg/peak millicores and compare to proposed limit.
+5. For EC2/instance count changes: call get_cloud_costs for CCM context, then use the pricing table for the before/after delta.
+6. For missing probes/PDB/limits: no Datadog tool call needed — explain the K8s failure mode directly.
+7. Respond in EXACTLY this 4-section format. Each section is mandatory.
 
 ## Risk Level: [CRITICAL/HIGH/MEDIUM/LOW]
 
@@ -423,10 +433,11 @@ Examples:
 ## Why This is a Problem
 [1-2 sentences. Lead with the DATA or hard technical reason. This is the critical section — it must explain WHY the change is dangerous, not just repeat what changed.
 Rules by type:
-- Replica reduction: "Datadog shows peak traffic required N replicas at X% CPU [last week/period] — cutting to M leaves only P% of peak capacity with no buffer."
+- Replica reduction: MUST include the actual DD numbers. Format: "Datadog shows [service] pods using [X]m CPU avg / [Y]m peak at [N] replicas. Cutting to [M] replicas means [N/M]× the traffic per pod — approximately [X×N/M]m CPU per pod vs the [limit]m limit." Do the math. Do not say "225 replicas suggests high load" — that's circular. Cite the measured CPU/memory.
+- HPA maxReplicas reduction: "Datadog shows [service] currently running [N] pods. The proposed maxReplicas of [M] would immediately evict [N-M] pods to enforce the ceiling — capacity drops below current live traffic before any scale-down is validated."
 - Cost over-provision: "Datadog shows the current fleet runs at X% avg CPU / Y% peak — well below the ~70% threshold where additional capacity helps. This change adds 4× capacity for demand that doesn't exist."
-- Memory limit: "Datadog shows pods using ~XMi steady-state — the proposed YMi limit leaves only ZMi headroom. Any GC pause or traffic spike triggers OOMKill across all N pods."
-- CPU limit: "Datadog shows avg Xm / peak Ym CPU per pod. The proposed Zm limit means pods are throttled at normal load, not just spikes — expect latency increases."
+- Memory limit: "Datadog shows pods using ~XMiB avg — the proposed YMi limit leaves only ZMiB headroom. Any GC pause or traffic spike triggers OOMKill across all N pods."
+- CPU limit: "Datadog shows [X]m avg / [Y]m peak CPU per pod. The proposed [Z]m limit means pods hit the throttle ceiling at normal load, not just spikes — latency increases immediately."
 - Missing health probes: "Without liveness/readiness probes, Kubernetes cannot detect stuck or crashed containers, so broken pods stay in the load balancer rotation and receive live traffic."
 - Missing PDB: "Without a PodDisruptionBudget, a node drain or rolling deploy can evict all N pods at once — full service outage for the duration."
 - Missing resource limits: "Without CPU/memory limits, this pod can consume the entire node's resources, starving every other pod on the node and triggering cascading evictions."
