@@ -55,12 +55,32 @@
                 analysis += '⚠️  Analysis failed to complete. Check action logs.';
               }
 
-              await github.rest.issues.createComment({
+              const { data: comments } = await github.rest.issues.listComments({
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                body: analysis
               });
+
+              const existing = comments.find(c =>
+                c.user.login === 'github-actions[bot]' &&
+                c.body.includes('IaC Guardian')
+              );
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  comment_id: existing.id,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: analysis
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: analysis
+                });
+              }
 
         - name: Check for critical risks
           run: |
