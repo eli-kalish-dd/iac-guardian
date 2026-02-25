@@ -4,6 +4,7 @@ Output Formatter
 Formats analysis output with professional styling for GitHub PR comments
 """
 
+import re
 from typing import Dict, Optional
 
 
@@ -45,10 +46,15 @@ class OutputFormatter:
     @staticmethod
     def _extract_risk_level(analysis: str) -> str:
         """Extract risk level from analysis text"""
+        # First try to match the structured '## Risk Level: X' header
+        match = re.search(r'##\s*Risk Level:\s*(CRITICAL|HIGH|MEDIUM|LOW)', analysis, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+        # Fallback: scan full text
         analysis_upper = analysis.upper()
         if 'CRITICAL' in analysis_upper or 'DO NOT MERGE' in analysis_upper:
             return 'CRITICAL'
-        elif 'HIGH RISK' in analysis_upper or 'SEVERE' in analysis_upper:
+        elif 'HIGH' in analysis_upper:
             return 'HIGH'
         elif 'MEDIUM' in analysis_upper or 'MODERATE' in analysis_upper:
             return 'MEDIUM'
@@ -142,39 +148,52 @@ class OutputFormatter:
     @staticmethod
     def format_for_github_concise(analysis: str, fix_pr_url: Optional[str] = None, metadata: Dict = None) -> str:
         """
-        Ultra-concise format for GitHub PR comments
+        Structured GitHub PR comment format.
 
-        Format:
-        - Risk badge
-        - 1-2 sentence reason
-        - Bullet point remediation
-        - Optional fix link
+        Four sections that answer the questions an engineer actually has:
+          1. Risk level  — how urgent is this?
+          2. What changed — what does this PR do? (factual, no judgment)
+          3. Why it's a problem — evidence + reasoning (Datadog data where available)
+          4. Recommendation — specific next step
+
+        This avoids the trap of the old format where "Why" just re-described the diff
+        without explaining *why* that's bad.
         """
         risk_level = OutputFormatter._extract_risk_level(analysis)
 
-        # Risk emoji
-        emojis = {
-            'CRITICAL': '🚨',
-            'HIGH': '⚠️',
-            'MEDIUM': '⚡',
-            'LOW': '✅'
-        }
+        emojis = {'CRITICAL': '🚨', 'HIGH': '⚠️', 'MEDIUM': '⚡', 'LOW': '✅'}
         emoji = emojis.get(risk_level, '⚡')
 
-        # Extract key reason (look for "Why This is Risky" section)
-        reason = OutputFormatter._extract_concise_reason(analysis, risk_level)
+        what_changed = OutputFormatter._extract_section(analysis, 'What Changed')
+        why_problem  = OutputFormatter._extract_section(analysis, 'Why This is a Problem')
+        what_to_do   = OutputFormatter._extract_section(analysis, 'What To Do', as_bullets=True)
 
-        # Extract remediation (look for "What To Do" section)
-        remediation = OutputFormatter._extract_concise_remediation(analysis)
+        # Fallback: if Claude used the old section names, pull from those
+        if not what_changed:
+            what_changed = OutputFormatter._extract_section(analysis, 'What Changed')
+        if not why_problem:
+            why_problem = OutputFormatter._extract_section(analysis, 'Why This is Risky')
+        if not what_to_do:
+            what_to_do = OutputFormatter._extract_section(analysis, 'What To Do', as_bullets=True)
 
-        # Build concise comment
         output = []
         output.append(f"## {emoji} IaC Guardian: **{risk_level} RISK**")
         output.append("")
-        output.append(f"**Why:** {reason}")
-        output.append("")
-        output.append("**Action:**")
-        output.append(remediation)
+
+        if what_changed:
+            output.append(f"**What changed:** {what_changed}")
+            output.append("")
+
+        if why_problem:
+            output.append(f"**Why it's a problem:** {why_problem}")
+            output.append("")
+
+        if what_to_do:
+            output.append("**Recommendation:**")
+            output.append(what_to_do)
+        else:
+            output.append("**Recommendation:**")
+            output.append("- Review and address the identified risks before merging")
 
         if fix_pr_url and 'simulated' not in fix_pr_url.lower():
             output.append("")
@@ -186,78 +205,50 @@ class OutputFormatter:
         return "\n".join(output)
 
     @staticmethod
-    def _extract_concise_reason(analysis: str, risk_level: str) -> str:
-        """Extract 1-2 sentence reason from analysis"""
-        # Look for "Why This is Risky" section
+    def _extract_section(analysis: str, section_name: str, as_bullets: bool = False) -> str:
+        """Extract text from a named ## section in the analysis."""
         lines = analysis.split('\n')
-        reason_lines = []
-        in_reason = False
+        collected = []
+        in_section = False
 
         for line in lines:
-            if 'why this is risky' in line.lower():
-                in_reason = True
+            if re.search(rf'##\s*{re.escape(section_name)}', line, re.IGNORECASE):
+                in_section = True
                 continue
-            if in_reason:
+            if in_section:
                 stripped = line.strip()
+                if stripped.startswith('##'):  # Next section
+                    break
+                if '```' in stripped:
+                    break
                 if not stripped:
                     continue
-                if stripped.startswith('##'):  # Next section
+                # Strip bold markers for inline text
+                cleaned = stripped.replace('**', '')
+                collected.append(cleaned)
+
+        if not collected:
+            return ''
+
+        if as_bullets:
+            # Return up to 2 bullet lines
+            bullets = []
+            for line in collected:
+                if line.startswith('-') or line.startswith('*'):
+                    bullets.append(line if line.startswith('-') else f"- {line[1:].strip()}")
+                elif not bullets:
+                    bullets.append(f"- {line}")
+                if len(bullets) >= 2:
                     break
-                # Collect non-empty, non-header lines
-                if stripped and not stripped.startswith('**') and not stripped.startswith('#'):
-                    reason_lines.append(stripped)
-                    # Stop after collecting some text
-                    if len(' '.join(reason_lines)) > 150:
-                        break
-
-        reason = ' '.join(reason_lines) if reason_lines else "Infrastructure change detected with potential risk."
-
-        # Truncate if too long
-        if len(reason) > 400:
-            # Try to end at a sentence
-            truncated = reason[:397]
-            last_period = truncated.rfind('.')
-            if last_period > 150:
-                reason = truncated[:last_period+1]
-            else:
-                reason = truncated + "..."
-
-        return reason
-
-    @staticmethod
-    def _extract_concise_remediation(analysis: str) -> str:
-        """Extract bullet point remediation from analysis"""
-        lines = analysis.split('\n')
-        remediation = []
-        in_remediation = False
-
-        for line in lines:
-            if 'what to do' in line.lower():
-                in_remediation = True
-                continue
-            if in_remediation:
-                stripped = line.strip()
-                if stripped.startswith('##'):  # Next section
-                    break
-                if '```' in stripped:  # Skip code blocks entirely
-                    break
-                if stripped.startswith('-') or stripped.startswith('*'):
-                    # Clean up bullet points
-                    cleaned = stripped.lstrip('-*').strip()
-                    if cleaned and not cleaned.startswith('**') and '`' not in cleaned[:3]:
-                        # Further clean up bold markers
-                        cleaned = cleaned.replace('**', '')
-                        remediation.append(f"- {cleaned}")
-                elif stripped and not stripped.startswith('#'):
-                    # Also capture non-bullet text
-                    cleaned = stripped.replace('**', '')
-                    if cleaned and len(remediation) == 0:  # First line can be non-bullet
-                        remediation.append(f"- {cleaned}")
-
-                if len(remediation) >= 2:  # Max 2 bullets for conciseness
-                    break
-
-        return '\n'.join(remediation) if remediation else "- Review and address the identified risks before merging"
+            return '\n'.join(bullets)
+        else:
+            # Return first meaningful paragraph (truncated at 350 chars)
+            text = ' '.join(collected)
+            if len(text) > 350:
+                cut = text[:347]
+                last_period = cut.rfind('.')
+                text = cut[:last_period + 1] if last_period > 100 else cut + '...'
+            return text
 
     @staticmethod
     def format_for_terminal(analysis: str, fix_pr_url: Optional[str] = None) -> str:

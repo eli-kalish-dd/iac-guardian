@@ -60,6 +60,11 @@ def parse_diff(diff_file: str) -> Dict[str, any]:
     if count_changes:
         changes['count_changes'] = count_changes
 
+    # Extract K8s memory limit changes
+    memory_limit_changes = re.findall(r'[-+]\s*memory:\s*"?(\d+[MmGg][Ii]?)"?', diff_content)
+    if memory_limit_changes:
+        changes['memory_limit_changes'] = memory_limit_changes
+
     return changes
 
 
@@ -164,6 +169,41 @@ _DD_TOOLS = [
             "required": ["service_name"],
         },
     },
+    {
+        "name": "get_cloud_costs",
+        "description": "Get real AWS cloud cost data from Datadog Cloud Cost Management. Returns daily spend for the past 7 days, optionally filtered by AWS product (e.g. 'amazonec2', 'rds', 'elb').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "aws_product": {"type": "string", "description": "AWS product filter (e.g. 'amazonec2', 'rds'). Omit for total.", "default": ""},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_memory_pressure",
+        "description": "Get memory usage vs limits for a K8s deployment. Returns avg/max memory usage in MiB per pod and current limit. Use this for any change that modifies memory limits or requests.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "deployment_name": {"type": "string", "description": "K8s deployment name"},
+                "hours_back": {"type": "integer", "description": "Hours of history to fetch", "default": 24},
+            },
+            "required": ["deployment_name"],
+        },
+    },
+    {
+        "name": "get_cpu_pressure",
+        "description": "Get CPU usage vs limits for a K8s deployment. Returns avg/max CPU usage in millicores per pod. Use this for any change that modifies CPU limits or requests.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "deployment_name": {"type": "string", "description": "K8s deployment name"},
+                "hours_back": {"type": "integer", "description": "Hours of history to fetch", "default": 24},
+            },
+            "required": ["deployment_name"],
+        },
+    },
 ]
 
 
@@ -223,6 +263,98 @@ def _execute_dd_tool(tool_name: str, tool_input: Dict) -> str:
         r3 = _query(f"sum:trace.http.request.hits{{service:{name}}}.as_count()")
         return f"Service Health: {name}\nCPU: {r1}\nRestarts: {r2}\nRequests: {r3}"
 
+    elif tool_name == "get_cloud_costs":
+        aws_product = tool_input.get("aws_product", "")
+        scope = f"aws_product:{aws_product}" if aws_product else "*"
+        # Query 7 days of daily costs (aggregated — avoid large fan-out)
+        week_ago = now - 7 * 86400
+        cost_result = client.query_metrics(
+            f"sum:aws.cost.net.amortized{{{scope}}}.rollup(sum, 86400)",
+            week_ago,
+            now,
+        )
+        series = cost_result.get("series", [])
+        if not series:
+            # Fallback: check CCM-specific endpoint format
+            cost_result = client.query_metrics(
+                f"sum:all.cost{{{scope}}}.rollup(sum, 86400)",
+                week_ago,
+                now,
+            )
+            series = cost_result.get("series", [])
+        if not series:
+            label = f"aws_product:{aws_product}" if aws_product else "total"
+            return f"No Cloud Cost Management data for {label}. Using EC2 on-demand pricing for estimates."
+        # Aggregate across all series
+        all_vals = []
+        for s in series:
+            all_vals.extend([p[1] for p in s.get("pointlist", []) if p[1] is not None])
+        if not all_vals:
+            return "CCM returned empty cost data."
+        avg_daily = sum(all_vals) / len(all_vals)
+        label = f"aws_product:{aws_product}" if aws_product else "all AWS"
+        return (
+            f"Cloud Cost Management ({label}, last 7 days):\n"
+            f"  avg daily cost: ${avg_daily:,.0f}\n"
+            f"  avg monthly cost: ${avg_daily * 30:,.0f}\n"
+            f"  data points: {len(all_vals)}"
+        )
+
+    elif tool_name == "get_memory_pressure":
+        # kubernetes.memory.usage returns bytes → convert to MiB (÷ 1048576)
+        usage_data = client.query_metrics(
+            f"avg:kubernetes.memory.usage{{kube_deployment:{name}}}", from_ts, now
+        )
+        limit_data = client.query_metrics(
+            f"avg:kubernetes.memory.limits{{kube_deployment:{name}}}", from_ts, now
+        )
+
+        def _mib_stats(result):
+            vals = [p[1] for s in result.get("series", [])
+                    for p in s.get("pointlist", []) if p[1] is not None]
+            if not vals:
+                return None, None
+            return sum(vals) / len(vals) / 1048576, max(vals) / 1048576
+
+        avg_use, max_use = _mib_stats(usage_data)
+        avg_lim, _ = _mib_stats(limit_data)
+
+        if avg_use is not None:
+            line = (f"Memory Pressure — {name}:\n"
+                    f"  avg usage: {avg_use:.0f}MiB/pod  max usage: {max_use:.0f}MiB/pod")
+            if avg_lim:
+                line += f"\n  current limit: {avg_lim:.0f}MiB/pod ({avg_use/avg_lim*100:.0f}% utilized)"
+            return line
+        return f"Memory Pressure — {name}: No data from Datadog."
+
+    elif tool_name == "get_cpu_pressure":
+        # kubernetes.cpu.usage.total returns nanocores → divide by 1e6 for millicores
+        # kubernetes.cpu.limits returns cores → multiply by 1000 for millicores
+        usage_data = client.query_metrics(
+            f"avg:kubernetes.cpu.usage.total{{kube_deployment:{name}}}", from_ts, now
+        )
+        limit_data = client.query_metrics(
+            f"avg:kubernetes.cpu.limits{{kube_deployment:{name}}}", from_ts, now
+        )
+
+        def _mc_stats(result, scale):
+            vals = [p[1] * scale for s in result.get("series", [])
+                    for p in s.get("pointlist", []) if p[1] is not None]
+            if not vals:
+                return None, None
+            return sum(vals) / len(vals), max(vals)
+
+        avg_use, max_use = _mc_stats(usage_data, 1e-6)   # nanocores → millicores
+        avg_lim, _ = _mc_stats(limit_data, 1000.0)        # cores → millicores
+
+        if avg_use is not None:
+            line = (f"CPU Pressure — {name}:\n"
+                    f"  avg usage: {avg_use:.0f}m/pod  max usage: {max_use:.0f}m/pod")
+            if avg_lim:
+                line += f"\n  current limit: {avg_lim:.0f}m/pod ({avg_use/avg_lim*100:.0f}% utilized)"
+            return line
+        return f"CPU Pressure — {name}: No data from Datadog."
+
     return f"Unknown tool: {tool_name}"
 
 
@@ -266,32 +398,58 @@ Analyze this infrastructure change:
 {changes['raw_diff'][:3000]}
 ```
 
+## AWS EC2 On-Demand Pricing Reference (us-east-1, per month = $/hr × 730hr)
+- t3.medium: $30/mo  t3.large: $61/mo  t3.xlarge: $122/mo
+- m5.xlarge: $154/mo  m5.2xlarge: $308/mo  m5.4xlarge: $616/mo
+- c5.xlarge: $124/mo  c5.2xlarge: $248/mo  c5.4xlarge: $496/mo  c5.9xlarge: $1,117/mo
+
 Instructions:
-1. Use Datadog tools to query metrics for any affected services or deployments.
-2. Assess the risk based on real data.
-3. Respond in exactly this format:
+1. For K8s changes: call get_deployment_replicas / get_deployment_health / get_pdb_status / get_hpa_status / get_memory_pressure / get_cpu_pressure as appropriate.
+2. For EC2/instance count changes: call get_cloud_costs for CCM context, then use the pricing table for the before/after delta.
+3. For security group changes: no tool call needed — assess from the diff directly.
+4. Respond in EXACTLY this 4-section format. Each section is mandatory.
 
 ## Risk Level: [CRITICAL/HIGH/MEDIUM/LOW]
 
-## Why This is Risky
-[1-2 sentences. Focus on the specific IaC issue in the diff. Rules:
-- Missing health probes: "No liveness/readiness probes — Kubernetes cannot detect if the container is stuck, so broken pods keep receiving traffic."
-- Insufficient replicas: "N replicas in production means a single pod failure or rolling update leaves M pods serving traffic — no HA guarantee."
-- Missing PodDisruptionBudget: "No PDB on a multi-replica service — during node drain or rolling update, Kubernetes can evict all pods simultaneously, causing full downtime."
-- Security group too open: "Port X open to 0.0.0.0/0 — exposed to the entire internet."
-- Cost/instance changes: state actual $/month before and after using real EC2 pricing, e.g. "5x c5.2xlarge = $1,680/mo → 10x c5.4xlarge = $6,720/mo (+$5,040/mo)".
-- If Datadog has no data: still lead with the IaC issue above; then add "Datadog has no metrics for <service> to confirm safe sizing."]
+## What Changed
+[One factual sentence describing what the PR does and its direct impact. No judgment — just facts.
+Examples:
+- "Reduces xray-converter-main replicas from 225 to 20."
+- "Scales data-processor fleet from 5× c5.2xlarge ($1,240/mo) to 10× c5.4xlarge ($4,960/mo, +$3,720/mo)."
+- "Reduces xray-converter-main memory limit from 512Mi to 128Mi per pod."
+- "Adds a new deployment (intake-processor) with no CPU or memory limits defined."
+- "Opens SSH port 22 to 0.0.0.0/0 on the intake-api-servers security group."]
+
+## Why This is a Problem
+[1-2 sentences. Lead with the DATA or hard technical reason. This is the critical section — it must explain WHY the change is dangerous, not just repeat what changed.
+Rules by type:
+- Replica reduction: "Datadog shows peak traffic required N replicas at X% CPU [last week/period] — cutting to M leaves only P% of peak capacity with no buffer."
+- Cost over-provision: "Datadog shows the current fleet runs at X% avg CPU / Y% peak — well below the ~70% threshold where additional capacity helps. This change adds 4× capacity for demand that doesn't exist."
+- Memory limit: "Datadog shows pods using ~XMi steady-state — the proposed YMi limit leaves only ZMi headroom. Any GC pause or traffic spike triggers OOMKill across all N pods."
+- CPU limit: "Datadog shows avg Xm / peak Ym CPU per pod. The proposed Zm limit means pods are throttled at normal load, not just spikes — expect latency increases."
+- Missing health probes: "Without liveness/readiness probes, Kubernetes cannot detect stuck or crashed containers, so broken pods stay in the load balancer rotation and receive live traffic."
+- Missing PDB: "Without a PodDisruptionBudget, a node drain or rolling deploy can evict all N pods at once — full service outage for the duration."
+- Missing resource limits: "Without CPU/memory limits, this pod can consume the entire node's resources, starving every other pod on the node and triggering cascading evictions."
+- Security group: "SSH (port 22) is now exposed to every IP on the internet, not just internal VPN range."
+- If Datadog has no data for the service: state the IaC risk clearly, then add: "Datadog has no metrics for <service> to confirm current utilization."]
 
 ## What To Do
-[1-2 bullet points. Be specific: e.g. add the probe config, set replicas to N, add PDB with minAvailable, restrict CIDR to VPN range, or right-size to X instance type saving $Y/mo.]
+[1-2 bullets. Concrete and specific — include actual numbers, config values, or alternatives.
+Examples:
+- "Keep replicas at 225; if cost reduction is needed, add an HPA with minReplicas: 150 and scale down only when CPU drops below 40% for 15+ minutes."
+- "Keep 5× c5.2xlarge ($1,240/mo); set a CPU alert at 70% utilization and scale only when demand materializes."
+- "Set memory limit to at least 200Mi (current usage + 75% buffer); verify with: kubectl top pods -l app=xray-converter-main."
+- "Add a resources block with CPU request: 200m, limit: 500m and memory request: 256Mi, limit: 512Mi."
+- "Add a PodDisruptionBudget with minAvailable: N-1 (e.g. minAvailable: 11 for a 12-replica deployment)."
+- "Restrict cidr_blocks to your VPN range (e.g. 10.0.0.0/8) instead of 0.0.0.0/0."]
 
 Risk level calibration:
-- CRITICAL: Immediate production outage (traffic will exceed capacity and crash) OR immediate security exposure (port open to 0.0.0.0/0)
-- HIGH: Could cause downtime under specific conditions (missing PDB on HA service, insufficient replicas, missing health probes)
-- MEDIUM: Suboptimal but not immediately dangerous (cost waste, missing observability)
+- CRITICAL: Immediate production outage (will crash under current load) OR immediate security exposure (0.0.0.0/0)
+- HIGH: Likely outage under normal conditions (memory OOMKill, CPU starvation, missing PDB, low replicas)
+- MEDIUM: Degraded performance or cost waste, but won't immediately crash (over-provisioned, suboptimal config)
 - LOW: Best-practice violation with minimal near-term risk
 
-IMPORTANT: Do NOT use code blocks (```) in the What To Do section. Plain text bullets only.
+IMPORTANT: Do NOT use code blocks (```) in any section. Plain text only.
 Keep it SHORT. A busy engineer needs to understand in 10 seconds.
 """
 
@@ -302,7 +460,8 @@ Keep it SHORT. A busy engineer needs to understand in 10 seconds.
             model="claude-sonnet-4-6",
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
-            mcp_servers=[{"type": "url", "url": DD_MCP_URL, "name": "datadog"}],
+            mcp_servers=[{"type": "url", "url": DD_MCP_URL, "name": "datadog",
+                          "authorization_token": os.getenv("DATADOG_API_KEY", "")}],
             betas=["mcp-client-2025-04-04"],
         )
         analysis_text = next(
@@ -401,16 +560,30 @@ Analyze this infrastructure change and provide a CRISP, SHORT analysis in exactl
 - Insufficient replicas: "N replicas in production means a single pod failure or rolling update leaves M pods serving traffic — no HA guarantee."
 - Missing PodDisruptionBudget: "No PDB on a multi-replica service — during node drain or rolling update, Kubernetes can evict all pods simultaneously, causing full downtime."
 - Security group too open: "Port X open to 0.0.0.0/0 — exposed to the entire internet."
-- Cost/instance changes: state actual $/month before and after using real EC2 pricing, e.g. "5x c5.2xlarge = $1,680/mo → 10x c5.4xlarge = $6,720/mo (+$5,040/mo)".
-- If Datadog has no data: still lead with the IaC issue above; then add "Datadog has no metrics for <service> to confirm safe sizing."]
+Respond in EXACTLY this 4-section format:
+
+## Risk Level: [CRITICAL/HIGH/MEDIUM/LOW]
+
+## What Changed
+[One factual sentence: what does this PR do and what is the direct impact? No judgment.
+E.g.: "Scales data-processor fleet from 5× c5.2xlarge ($1,240/mo) to 10× c5.4xlarge ($4,960/mo, +$3,720/mo)."]
+
+## Why This is a Problem
+[1-2 sentences. Lead with DATA or technical reason WHY this is dangerous/wasteful — not just a repeat of what changed.
+- Cost over-provision: include current utilization from Datadog (e.g. "Current fleet runs at 15% avg CPU — well below the ~70% threshold where more capacity helps. This adds 4× capacity for demand that doesn't exist.")
+- Replica reduction: include peak traffic data if available
+- Memory/CPU: include usage vs proposed limit
+- Missing probes/PDB/limits: explain the failure mode concisely
+- If no Datadog data: explain the IaC risk, then note "Datadog has no metrics for <service>."]
 
 ## What To Do
-[1-2 bullet points max. Be specific: e.g. add the probe config, set replicas to N, add PDB with minAvailable, restrict CIDR to VPN range, or right-size to X instance type saving $Y/mo.]
+[1-2 bullets. Concrete numbers and alternatives.
+E.g.: "Keep 5× c5.2xlarge; set a CPU alert at 70% and scale only when demand materializes."]
 
 Risk level calibration:
-- CRITICAL: Immediate production outage (traffic will exceed capacity and crash) OR immediate security exposure (port open to 0.0.0.0/0)
-- HIGH: Could cause downtime under specific conditions (missing PDB on HA service, insufficient replicas, missing health probes)
-- MEDIUM: Suboptimal but not immediately dangerous (cost waste, missing observability)
+- CRITICAL: Immediate outage or 0.0.0.0/0 security exposure
+- HIGH: Likely failure under normal conditions (OOMKill, starvation, missing PDB, low replicas)
+- MEDIUM: Cost waste or degraded performance but won't immediately crash
 - LOW: Best-practice violation with minimal near-term risk
 
 IMPORTANT: Do NOT use code blocks (```) in the What To Do section. Plain text bullets only.

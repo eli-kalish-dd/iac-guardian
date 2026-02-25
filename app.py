@@ -313,44 +313,59 @@ def main():
                     "Scenario 3: Missing Health Checks",
                     "Scenario 4: Missing PodDisruptionBudget",
                     "Scenario 5: Insufficient Replicas",
-                    "Scenario 6: Security Group Too Open"
+                    "Scenario 6: Security Group Too Open",
+                    "Scenario 7: Memory Limit OOMKill Risk",
+                    "Scenario 8: Missing Resource Limits",
+                    "Scenario 9: CPU Limit Throttling",
                 ]
             )
 
             if scenario == "Scenario 1: Peak Traffic Risk":
-                st.info("🚨 Reduces K8s replicas 20→5. Will it crash?")
-                diff_path = "examples/scenario-1-peak-traffic/payment-api-deployment.yaml"
+                st.info("🚨 xray-converter-main: reduces 225→20 replicas. Real service, live data.")
+                diff_path = "examples/scenario-1-peak-traffic/xray-converter-main-deployment.yaml"
             elif scenario == "Scenario 2: Cost Optimization":
                 st.info("💰 Adds 10x c5.4xlarge. Is it over-provisioned?")
                 diff_path = "examples/scenario-2-cost-optimization/compute.tf"
             elif scenario == "Scenario 3: Missing Health Checks":
-                st.info("⚠️ Container deployed without liveness/readiness probes")
-                diff_path = "examples/scenario-3-health-checks/api-deployment.yaml"
+                st.info("⚠️ errors-logs-extractor: 51 pods, no liveness/readiness probes. Real service.")
+                diff_path = "examples/scenario-3-health-checks/errors-logs-extractor-deployment.yaml"
             elif scenario == "Scenario 4: Missing PodDisruptionBudget":
-                st.info("🔄 High-availability service without PDB - risky rolling updates")
-                diff_path = "examples/scenario-4-pdb/frontend-deployment.yaml"
+                st.info("🔄 appsec-reducer: 12 pods, no PDB — a rolling deploy could take it fully down. Real service.")
+                diff_path = "examples/scenario-4-pdb/appsec-reducer-deployment.yaml"
             elif scenario == "Scenario 5: Insufficient Replicas":
-                st.info("🔢 Production service with only 2 replicas - no HA during deploys")
-                diff_path = "examples/scenario-5-replicas/checkout-deployment.yaml"
+                st.info("🔢 k8s-lifecycle-publisher: 4→2 replicas — single pod failure = 50% capacity loss. Real service.")
+                diff_path = "examples/scenario-5-replicas/k8s-lifecycle-publisher-deployment.yaml"
             elif scenario == "Scenario 6: Security Group Too Open":
                 st.info("🚪 SSH open to 0.0.0.0/0 - security vulnerability")
                 diff_path = "examples/scenario-6-security/security-groups.tf"
+            elif scenario == "Scenario 7: Memory Limit OOMKill Risk":
+                st.info("💥 xray-converter-main: cuts memory limit 512Mi→128Mi. Real service uses ~113MiB/pod — only 15MiB headroom. OOMKill risk.")
+                diff_path = "examples/scenario-7-memory-limit/xray-converter-main-deployment.yaml"
+            elif scenario == "Scenario 8: Missing Resource Limits":
+                st.info("⚠️ New intake-processor deployment with no CPU/memory limits — can consume the entire node and starve neighboring pods.")
+                diff_path = "examples/scenario-8-no-limits/intake-processor-deployment.yaml"
+            elif scenario == "Scenario 9: CPU Limit Throttling":
+                st.info("🐢 xray-converter-main: cuts CPU limit 500m→200m. Real service uses ~158m avg / 188m peak — will be throttled under normal load.")
+                diff_path = "examples/scenario-9-cpu-limit/xray-converter-main-deployment.yaml"
 
-            # Create mock diff for demo
+            # Create diff for demo
             if scenario == "Scenario 1: Peak Traffic Risk":
-                diff_content = """diff --git a/payment-api-deployment.yaml b/payment-api-deployment.yaml
-index 63e64b6..860092d 100644
---- a/payment-api-deployment.yaml
-+++ b/payment-api-deployment.yaml
-@@ -8,7 +8,7 @@ metadata:
-     team: payments
-     service: checkout
+                diff_content = """diff --git a/k8s/xray-converter-main-deployment.yaml b/k8s/xray-converter-main-deployment.yaml
+index 8f2a1b3..4d9c7e2 100644
+--- a/k8s/xray-converter-main-deployment.yaml
++++ b/k8s/xray-converter-main-deployment.yaml
+@@ -4,9 +4,9 @@ kind: Deployment
+ metadata:
+   name: xray-converter-main
+   namespace: production
+   labels:
+     team: apm-distributed-tracing
  spec:
--  replicas: 20
-+  replicas: 5
+-  replicas: 225
++  replicas: 20
    selector:
      matchLabels:
-       app: payment-api"""
+       app: xray-converter-main"""
             elif scenario == "Scenario 2: Cost Optimization":
                 diff_content = """diff --git a/compute.tf b/compute.tf
 index f9b5445..59a26b9 100644
@@ -373,68 +388,161 @@ index f9b5445..59a26b9 100644
      Name        = "data-processor-${count.index}\""""
 
             elif scenario == "Scenario 3: Missing Health Checks":
-                diff_content = """diff --git a/api-deployment.yaml b/api-deployment.yaml
+                diff_content = """diff --git a/k8s/errors-logs-extractor-deployment.yaml b/k8s/errors-logs-extractor-deployment.yaml
 index abc123..def456 100644
---- a/api-deployment.yaml
-+++ b/api-deployment.yaml
-@@ -1,6 +1,7 @@
+--- a/k8s/errors-logs-extractor-deployment.yaml
++++ b/k8s/errors-logs-extractor-deployment.yaml
+@@ -1,8 +1,9 @@
  apiVersion: apps/v1
  kind: Deployment
  metadata:
-   name: api-server
+   name: errors-logs-extractor-logs-datadog-5cb9
 +  namespace: production
  spec:
-   replicas: 10
-@@ -15,6 +16,7 @@ spec:
-      containers:
-      - name: api
-        image: api-server:v2.0
-+        # NOTE: No liveness or readiness probes configured!
-        ports:
-        - containerPort: 8080"""
+   replicas: 51
+@@ -15,7 +16,8 @@ spec:
+     spec:
+       containers:
+       - name: errors-logs-extractor
+-        image: errors-logs-extractor:v3.1.1
++        image: errors-logs-extractor:v3.2.0
+         ports:
+         - containerPort: 8080
++        # No livenessProbe or readinessProbe defined"""
 
             elif scenario == "Scenario 4: Missing PodDisruptionBudget":
-                diff_content = """diff --git a/frontend-deployment.yaml b/frontend-deployment.yaml
+                diff_content = """diff --git a/k8s/appsec-reducer-deployment.yaml b/k8s/appsec-reducer-deployment.yaml
 index aaa111..bbb222 100644
---- a/frontend-deployment.yaml
-+++ b/frontend-deployment.yaml
-@@ -1,9 +1,10 @@
+--- a/k8s/appsec-reducer-deployment.yaml
++++ b/k8s/appsec-reducer-deployment.yaml
+@@ -1,10 +1,11 @@
  apiVersion: apps/v1
  kind: Deployment
  metadata:
-   name: frontend
-   namespace: production
-+  # NOTE: No PodDisruptionBudget defined for this service
- spec:
-   replicas: 5"""
-
-            elif scenario == "Scenario 5: Insufficient Replicas":
-                diff_content = """diff --git a/checkout-deployment.yaml b/checkout-deployment.yaml
-index xxx999..yyy888 100644
---- a/checkout-deployment.yaml
-+++ b/checkout-deployment.yaml
-@@ -5,7 +5,7 @@ metadata:
+   name: appsec-reducer-signal-6cf25-datadog-sep
    namespace: production
    labels:
-    app: checkout
+     team: appsec
++    env: production
  spec:
--  replicas: 3
+-  replicas: 12
++  replicas: 15
+   selector:
+     matchLabels:
+       app: appsec-reducer
++# Note: No PodDisruptionBudget configured for this deployment"""
+
+            elif scenario == "Scenario 5: Insufficient Replicas":
+                diff_content = """diff --git a/k8s/k8s-lifecycle-publisher-deployment.yaml b/k8s/k8s-lifecycle-publisher-deployment.yaml
+index xxx999..yyy888 100644
+--- a/k8s/k8s-lifecycle-publisher-deployment.yaml
++++ b/k8s/k8s-lifecycle-publisher-deployment.yaml
+@@ -4,8 +4,8 @@ metadata:
+   name: k8s-lifecycle-publisher-shared-bone
+   namespace: production
+   labels:
+     team: container-platform
+ spec:
+-  replicas: 4
 +  replicas: 2
-   selector:"""
+   selector:
+     matchLabels:
+       app: k8s-lifecycle-publisher"""
+
+            elif scenario == "Scenario 7: Memory Limit OOMKill Risk":
+                diff_content = """diff --git a/k8s/xray-converter-main-deployment.yaml b/k8s/xray-converter-main-deployment.yaml
+index abc111..def222 100644
+--- a/k8s/xray-converter-main-deployment.yaml
++++ b/k8s/xray-converter-main-deployment.yaml
+@@ -4,14 +4,14 @@ kind: Deployment
+ metadata:
+   name: xray-converter-main
+   namespace: production
+ spec:
+   template:
+     spec:
+       containers:
+       - name: xray-converter
+         image: xray-converter:v2.4.1
+         resources:
+           limits:
+-            memory: "512Mi"
++            memory: "128Mi"
+             cpu: "500m"
+           requests:
+-            memory: "256Mi"
++            memory: "128Mi"
+             cpu: "250m" """
+
+            elif scenario == "Scenario 8: Missing Resource Limits":
+                diff_content = """diff --git a/k8s/intake-processor-deployment.yaml b/k8s/intake-processor-deployment.yaml
+new file mode 100644
+index 0000000..abc789
+--- /dev/null
++++ b/k8s/intake-processor-deployment.yaml
+@@ -0,0 +1,22 @@
++apiVersion: apps/v1
++kind: Deployment
++metadata:
++  name: intake-processor
++  namespace: production
++  labels:
++    team: data-ingestion
++spec:
++  replicas: 8
++  selector:
++    matchLabels:
++      app: intake-processor
++  template:
++    metadata:
++      labels:
++        app: intake-processor
++    spec:
++      containers:
++      - name: intake-processor
++        image: intake-processor:v1.4.2
++        ports:
++        - containerPort: 8080
++        # No resources block — no CPU/memory limits or requests defined"""
+
+            elif scenario == "Scenario 9: CPU Limit Throttling":
+                diff_content = """diff --git a/k8s/xray-converter-main-deployment.yaml b/k8s/xray-converter-main-deployment.yaml
+index abc111..xyz333 100644
+--- a/k8s/xray-converter-main-deployment.yaml
++++ b/k8s/xray-converter-main-deployment.yaml
+@@ -4,14 +4,14 @@ kind: Deployment
+ metadata:
+   name: xray-converter-main
+   namespace: production
+ spec:
+   template:
+     spec:
+       containers:
+       - name: xray-converter
+         image: xray-converter:v2.4.1
+         resources:
+           limits:
+             memory: "512Mi"
+-            cpu: "500m"
++            cpu: "200m"
+           requests:
+             memory: "256Mi"
+-            cpu: "250m"
++            cpu: "100m" """
 
             elif scenario == "Scenario 6: Security Group Too Open":
-                diff_content = """diff --git a/security-groups.tf b/security-groups.tf
+                diff_content = """diff --git a/terraform/intake-api-security-groups.tf b/terraform/intake-api-security-groups.tf
 index zzz777..www666 100644
---- a/security-groups.tf
-+++ b/security-groups.tf
+--- a/terraform/intake-api-security-groups.tf
++++ b/terraform/intake-api-security-groups.tf
 @@ -1,10 +1,11 @@
- resource "aws_security_group" "app_servers" {
-   name        = "app-servers"
-  description = "Security group for application servers"
-   vpc_id      = aws_vpc.main.id
+ resource "aws_security_group" "intake_api_servers" {
+   name        = "intake-api-servers"
+   description = "Security group for intake API ingestion fleet"
+   vpc_id      = aws_vpc.prod.id
 
    ingress {
-+    description = "SSH access"
++    description = "SSH access for debugging"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"

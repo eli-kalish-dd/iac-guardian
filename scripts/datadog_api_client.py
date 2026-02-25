@@ -274,11 +274,19 @@ def get_datadog_context(changes: Dict) -> Optional[Dict]:
     # Check for K8s replica changes
     if changes.get('k8s_changes'):
         for k8s_file in changes['k8s_changes']:
-            path = k8s_file['path']
-            if 'payment-api' in path.lower():
-                service_name = "payment-api"
-                context['k8s_metrics'] = client.query_k8s_metrics(service_name)
-                context['incidents'] = client.query_incidents(service_name)
+            # Extract deployment name from metadata.name in the diff content
+            raw = changes.get('raw_diff', '')
+            name_match = re.search(r'\n\s{0,4}name:\s+([\w][\w.-]+)', raw)
+            if name_match:
+                service_name = name_match.group(1)
+            else:
+                # Fall back to filename, stripping common deployment suffixes
+                fname = k8s_file['path'].split('/')[-1]
+                service_name = re.sub(r'[-_](deployment|service|statefulset|daemonset)\.ya?ml$', '', fname, flags=re.I)
+                service_name = re.sub(r'\.ya?ml$', '', service_name)
+            context['k8s_metrics'] = client.query_k8s_metrics(service_name)
+            context['incidents'] = client.query_incidents(service_name)
+            break  # first K8s file only
 
     # Check for Terraform compute changes
     if changes.get('terraform_changes'):
