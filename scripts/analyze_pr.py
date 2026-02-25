@@ -415,7 +415,8 @@ Instructions — fetch Datadog data using whatever query tools are available to 
 1. For replica count changes: fetch BOTH of these metrics for <deployment_name>, last 24h:
    - Replica count: avg:kubernetes_state.deployment.replicas_available{{kube_deployment:<name>}}
    - CPU usage: avg:kubernetes.cpu.usage.total{{kube_deployment:<name>}} (nanocores — divide by 1e6 for millicores)
-   Do the math: if pods use Xm CPU avg at N replicas, dropping to M means X×(N/M)m per pod. Compare to the CPU limit.
+   FIRST check for IaC drift: if the spec replica count (from the diff) differs significantly from the live DD replica count, that IS the primary finding — the IaC is out of sync with production. Flag this before evaluating the proposed change. Format: "Datadog shows <service> running <live_N> pods — the spec says <spec_N>. The IaC has drifted from production. Merging changes on a stale spec risks an unknown state."
+   If spec and live counts are close, do the CPU math: if pods use Xm CPU avg at N replicas, dropping to M means X×(N/M)m per pod. Compare to the CPU limit.
 
 2. For HPA maxReplicas changes: fetch avg:kubernetes_state.deployment.replicas_available{{kube_deployment:<name>}}. If current running pods > proposed maxReplicas, flag CRITICAL — the ceiling is below live traffic.
 
@@ -443,7 +444,8 @@ Examples:
 ## Why This is a Problem
 [1-2 sentences. Lead with the DATA or hard technical reason. This is the critical section — it must explain WHY the change is dangerous, not just repeat what changed.
 Rules by type:
-- Replica reduction: MUST include the actual DD numbers. Format: "Datadog shows [service] pods using [X]m CPU avg / [Y]m peak at [N] replicas. Cutting to [M] replicas means [N/M]× the traffic per pod — approximately [X×N/M]m CPU per pod vs the [limit]m limit." Do the math. Do not say "225 replicas suggests high load" — that's circular. Cite the measured CPU/memory.
+- IaC drift (spec ≠ live): "Datadog shows [service] running [live_N] pods — the YAML spec says [spec_N]. Someone changed production without updating the IaC (or vice versa). Merging a replica change on top of a stale spec means you're operating blind — you don't know what the safe floor actually is until the drift is reconciled."
+- Replica reduction (spec matches live): MUST include the actual DD numbers. Format: "Datadog shows [service] pods using [X]m CPU avg / [Y]m peak at [N] replicas. Cutting to [M] replicas means [N/M]× the traffic per pod — approximately [X×N/M]m CPU per pod vs the [limit]m limit." Do the math. Do not say "225 replicas suggests high load" — that's circular. Cite the measured CPU/memory.
 - HPA maxReplicas reduction: "Datadog shows [service] currently running [N] pods. The proposed maxReplicas of [M] would immediately evict [N-M] pods to enforce the ceiling — capacity drops below current live traffic before any scale-down is validated."
 - Cost over-provision: Lead with CCM spend from get_cloud_costs. Format: "Datadog CCM shows current EC2 spend at $X/mo. This change adds [N] larger instances, increasing the fleet cost to ~$Y/mo (+$Z/mo, +P%). No load event or capacity alert justifies the increase." Do NOT claim CPU utilization % — we don't have EC2 host CPU metrics in scope.
 - Memory limit: "Datadog shows pods using ~XMiB avg — the proposed YMi limit leaves only ZMiB headroom. Any GC pause or traffic spike triggers OOMKill across all N pods."
