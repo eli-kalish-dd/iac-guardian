@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: errors-logs-extractor-logs-datadog-5cb9
+  namespace: production
+  labels:
+    app: errors-logs-extractor-logs-datadog-5cb9
+    team: logs
+    service: errors-logs-extractor
+spec:
+  replicas: 51
+  selector:
+    matchLabels:
+      app: errors-logs-extractor-logs-datadog-5cb9
+  template:
+    metadata:
+      labels:
+        app: errors-logs-extractor-logs-datadog-5cb9
+        version: v3.1.0
+    spec:
+      containers:
+      - name: errors-logs-extractor
+        image: datadog/errors-logs-extractor:v3.1.0
+        ports:
+        - containerPort: 8080
+          name: http
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: DD_ENV
+          value: "production"
+        - name: DD_SERVICE
+          value: "errors-logs-extractor"
+        - name: DD_VERSION
+          value: "v3.1.0"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: errors-logs-extractor-logs-datadog-5cb9
+  namespace: production
+spec:
+  selector:
+    app: errors-logs-extractor-logs-datadog-5cb9
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  type: ClusterIP
