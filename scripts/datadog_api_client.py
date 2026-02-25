@@ -64,7 +64,8 @@ class DatadogAPIClient:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            print(f"Error querying Datadog metrics: {e}")
+            import sys
+            print(f"Error querying Datadog metrics: {e}", file=sys.stderr)
             return self._mock_metrics_response()
 
     def query_k8s_metrics(self, service_name: str, namespace: str = "production") -> Dict:
