@@ -464,27 +464,11 @@ IMPORTANT: Do NOT use code blocks (```) in any section. Plain text only.
 Keep it SHORT. A busy engineer needs to understand in 10 seconds.
 """
 
-    # Try: official Datadog MCP server via Anthropic API URL-type MCP beta
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.beta.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-            mcp_servers=[{"type": "url", "url": DD_MCP_URL, "name": "datadog",
-                          "authorization_token": os.getenv("DATADOG_API_KEY", "")}],
-            betas=["mcp-client-2025-04-04"],
-        )
-        analysis_text = next(
-            (b.text for b in reversed(response.content) if hasattr(b, "text")), ""
-        )
-        if analysis_text:
-            return {"analysis": analysis_text, "data_source": "mcp"}
-    except Exception as e:
-        if os.getenv('GITHUB_ACTIONS') != 'true':
-            print(f"⚠️  DD MCP URL failed ({e}), trying tool-use fallback")
-
-    # Fallback: multi-turn tool-use loop with DatadogAPIClient (real API or mock)
+    # Multi-turn tool-use loop with DatadogAPIClient (real DD API).
+    # The official DD MCP URL path (mcp.datadoghq.com) exposes different tool names
+    # (get_datadog_metric etc.) that don't match our _DD_TOOLS definitions, causing Claude
+    # to report "no data" even when metrics exist. The tool-use loop below calls the real
+    # DD API directly via our custom tool wrappers and is the reliable path.
     try:
         client = anthropic.Anthropic(api_key=api_key)
         messages = [{"role": "user", "content": prompt}]
