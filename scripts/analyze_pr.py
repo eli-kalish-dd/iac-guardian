@@ -413,19 +413,19 @@ Analyze this infrastructure change:
 Instructions — fetch Datadog data using whatever query tools are available to you:
 
 1. For replica count changes: fetch BOTH of these metrics for <deployment_name>, last 24h:
-   - Replica count: avg:kubernetes_state.deployment.replicas_available{kube_deployment:<name>}
-   - CPU usage: avg:kubernetes.cpu.usage.total{kube_deployment:<name>} (nanocores — divide by 1e6 for millicores)
+   - Replica count: avg:kubernetes_state.deployment.replicas_available{{kube_deployment:<name>}}
+   - CPU usage: avg:kubernetes.cpu.usage.total{{kube_deployment:<name>}} (nanocores — divide by 1e6 for millicores)
    Do the math: if pods use Xm CPU avg at N replicas, dropping to M means X×(N/M)m per pod. Compare to the CPU limit.
 
-2. For HPA maxReplicas changes: fetch avg:kubernetes_state.deployment.replicas_available{kube_deployment:<name>}. If current running pods > proposed maxReplicas, flag CRITICAL — the ceiling is below live traffic.
+2. For HPA maxReplicas changes: fetch avg:kubernetes_state.deployment.replicas_available{{kube_deployment:<name>}}. If current running pods > proposed maxReplicas, flag CRITICAL — the ceiling is below live traffic.
 
-3. For memory limit changes: fetch avg:kubernetes.memory.usage{kube_deployment:<name>} (bytes — divide by 1048576 for MiB) and avg:kubernetes.memory.limits{kube_deployment:<name>}. Show headroom = limit − avg usage.
+3. For memory limit changes: fetch avg:kubernetes.memory.usage{{kube_deployment:<name>}} (bytes — divide by 1048576 for MiB) and avg:kubernetes.memory.limits{{kube_deployment:<name>}}. Show headroom = limit − avg usage.
 
-4. For CPU limit changes: fetch avg:kubernetes.cpu.usage.total{kube_deployment:<name>} (nanocores → millicores) and avg:kubernetes.cpu.limits{kube_deployment:<name>} (cores → multiply by 1000 for millicores). Compare avg/peak to proposed limit.
+4. For CPU limit changes: fetch avg:kubernetes.cpu.usage.total{{kube_deployment:<name>}} (nanocores → millicores) and avg:kubernetes.cpu.limits{{kube_deployment:<name>}} (cores → multiply by 1000 for millicores). Compare avg/peak to proposed limit.
 
 5. For EC2/instance count changes: fetch cloud cost data (e.g. aws.cost.net.amortized or all.cost, last 7 days, sum rolled up daily). Then use the pricing table for before/after delta.
 
-6. For missing health probes: fetch sum:kubernetes.containers.restarts{kube_deployment:<name>} last 24h. If restarts > 0, cite the number. For missing PDB/limits: no query needed — explain the K8s failure mode directly.
+6. For missing health probes: fetch sum:kubernetes.containers.restarts{{kube_deployment:<name>}} last 24h. If restarts > 0, cite the number. For missing PDB/limits: no query needed — explain the K8s failure mode directly.
 
 7. Respond in EXACTLY this 4-section format. Each section is mandatory.
 
