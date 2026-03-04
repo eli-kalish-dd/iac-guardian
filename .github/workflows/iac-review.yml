@@ -1,91 +1,91 @@
-  name: IaC Guardian Review
+name: IaC Guardian Review
 
-  on:
-    pull_request:
-      paths:
-        - '**.yaml'
-        - '**.yml'
-        - '**.tf'
-        - '**.tfvars'
+on:
+  pull_request:
+    paths:
+      - '**.yaml'
+      - '**.yml'
+      - '**.tf'
+      - '**.tfvars'
 
-  jobs:
-    analyze:
-      runs-on: ubuntu-latest
-      permissions:
-        pull-requests: write
-        contents: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
 
-      steps:
-        - uses: actions/checkout@v3
-          with:
-            fetch-depth: 0
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-        - name: Set up Python
-          uses: actions/setup-python@v4
-          with:
-            python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-        - name: Install dependencies
-          run: |
-            pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
 
-        - name: Analyze changes
-          id: analyze
-          env:
-            ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-            DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
-            DATADOG_APP_KEY: ${{ secrets.DATADOG_APP_KEY }}
-            GITHUB_ACTIONS: true
-          run: |
-            git diff origin/main...HEAD -- '*.yaml' '*.yml' '*.tf' '*.tfvars' > changes.diff
-            python scripts/analyze_pr.py changes.diff > analysis.txt || true
-            cat analysis.txt
+      - name: Analyze changes
+        id: analyze
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DATADOG_APP_KEY: ${{ secrets.DATADOG_APP_KEY }}
+          GITHUB_ACTIONS: true
+        run: |
+          git diff origin/main...HEAD -- '*.yaml' '*.yml' '*.tf' '*.tfvars' > changes.diff
+          python scripts/analyze_pr.py changes.diff > analysis.txt || true
+          cat analysis.txt
 
-        - name: Post comment
-          uses: actions/github-script@v7
-          if: always()
-          with:
-            script: |
-              const fs = require('fs');
-              let analysis = '🛡️  IaC Guardian Analysis\n\n';
+      - name: Post comment
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+            let analysis = '🛡️  IaC Guardian Analysis\n\n';
 
-              try {
-                analysis += fs.readFileSync('analysis.txt', 'utf8');
-              } catch (e) {
-                analysis += '⚠️  Analysis failed to complete. Check action logs.';
-              }
+            try {
+              analysis += fs.readFileSync('analysis.txt', 'utf8');
+            } catch (e) {
+              analysis += '⚠️  Analysis failed to complete. Check action logs.';
+            }
 
-              const { data: comments } = await github.rest.issues.listComments({
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes('IaC Guardian')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                comment_id: existing.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: analysis
+              });
+            } else {
+              await github.rest.issues.createComment({
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
+                body: analysis
               });
+            }
 
-              const existing = comments.find(c =>
-                c.user.login === 'github-actions[bot]' &&
-                c.body.includes('IaC Guardian')
-              );
-
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  comment_id: existing.id,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  body: analysis
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  issue_number: context.issue.number,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  body: analysis
-                });
-              }
-
-        - name: Check for critical risks
-          run: |
-            if grep -qi "CRITICAL\|DO NOT MERGE" analysis.txt 2>/dev/null; then
-              echo "❌ Critical risks detected"
-              exit 1
-            fi
-            echo "✅ No critical risks"
+      - name: Check for critical risks
+        run: |
+          if grep -qi "CRITICAL\|DO NOT MERGE" analysis.txt 2>/dev/null; then
+            echo "❌ Critical risks detected"
+            exit 1
+          fi
+          echo "✅ No critical risks"
