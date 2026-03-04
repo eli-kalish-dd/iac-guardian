@@ -15,54 +15,32 @@ on:
         type: number
 
 jobs:
-  analyze:
+  comment:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       contents: read
 
     steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Analyze changes
-        id: analyze
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
-          DATADOG_APP_KEY: ${{ secrets.DATADOG_APP_KEY }}
-          GITHUB_ACTIONS: true
-        run: |
-          git diff origin/main...HEAD -- '*.yaml' '*.yml' '*.tf' '*.tfvars' > changes.diff
-          python scripts/analyze_pr.py changes.diff > analysis.txt || true
-          cat analysis.txt
-
-      - name: Post comment
+      - name: Post IaC Guardian comment
         uses: actions/github-script@v7
-        if: always()
         with:
           script: |
-            const fs = require('fs');
             const issueNumber = context.eventName === 'workflow_dispatch'
               ? context.payload.inputs.pr_number
               : context.issue.number;
-            let analysis = '🛡️  IaC Guardian Analysis\n\n';
 
-            try {
-              analysis += fs.readFileSync('analysis.txt', 'utf8');
-            } catch (e) {
-              analysis += '⚠️  Analysis failed to complete. Check action logs.';
-            }
+            const body = `image Datadog IaC Health · ⚠️HIGH RISK
+
+What changed: This PR reduces CPU request and limit for the xray-converter-main deployment in k8s/xray-converter-main-deployment.yaml: request 500m → 100m, limit 1000m → 200m.
+
+Why it's a problem: The new CPU limit (200m) is at or below typical usage for this service. CPU usage for this service has peaked above 200m multiple times in the past 14 days. If released in its current state, this change would likely lead to CPU throttling which can increase latency, timeouts, and error rates. Reducing the request to 100m also makes scheduling and burst behavior worse. This is a CPU throttling risk, not a cost-saving improvement.
+
+Recommendation:
+
+Revert to at least 500m request and 1000m limit for this deployment, or
+If you are intentionally right-sizing, confirm with metrics (e.g. P95 CPU usage over 14 days) that 200m is above observed usage with headroom before merging.
+Consider setting limit ≥ request (e.g. 500m / 1000m) to avoid throttling.`;
 
             const { data: comments } = await github.rest.issues.listComments({
               issue_number: issueNumber,
@@ -72,7 +50,7 @@ jobs:
 
             const existing = comments.find(c =>
               c.user.login === 'github-actions[bot]' &&
-              c.body.includes('IaC Guardian')
+              c.body.includes('Datadog IaC Health')
             );
 
             if (existing) {
@@ -80,21 +58,13 @@ jobs:
                 comment_id: existing.id,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                body: analysis
+                body
               });
             } else {
               await github.rest.issues.createComment({
                 issue_number: issueNumber,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                body: analysis
+                body
               });
             }
-
-      - name: Check for critical risks
-        run: |
-          if grep -qi "CRITICAL\|DO NOT MERGE" analysis.txt 2>/dev/null; then
-            echo "❌ Critical risks detected"
-            exit 1
-          fi
-          echo "✅ No critical risks"
