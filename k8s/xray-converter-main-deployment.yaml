@@ -1,5 +1,4 @@
-# Baseline (safe) version: 500m request, 1000m limit.
-# PRs that reduce these will trigger "CPU limit throttling" analysis.
+# Risky: reduced CPU (triggers "CPU limit throttling" analysis)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,7 +25,7 @@ spec:
         resources:
           requests:
             memory: "256Mi"
-            cpu: "500m"
+            cpu: "100m"
           limits:
             memory: "512Mi"
-            cpu: "1000m"
+            cpu: "200m"
