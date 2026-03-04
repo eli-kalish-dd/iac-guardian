@@ -1,0 +1,32 @@
+# Baseline (safe) version: 500m request, 1000m limit.
+# PRs that reduce these will trigger "CPU limit throttling" analysis.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xray-converter-main
+  namespace: production
+  labels:
+    app: xray-converter-main
+    service: xray-converter-main
+spec:
+  replicas: 32
+  selector:
+    matchLabels:
+      app: xray-converter-main
+  template:
+    metadata:
+      labels:
+        app: xray-converter-main
+    spec:
+      containers:
+      - name: xray-converter-main
+        image: datadog/xray-converter-main:v4.1.0
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"

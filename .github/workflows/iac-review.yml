@@ -7,13 +7,19 @@ on:
       - '**.yml'
       - '**.tf'
       - '**.tfvars'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to comment on (for manual run)'
+        required: true
+        type: number
 
 jobs:
   analyze:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: read
+      runs-on: ubuntu-latest
+      permissions:
+        pull-requests: write
+        contents: read
 
     steps:
       - uses: actions/checkout@v3
@@ -47,6 +53,9 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const issueNumber = context.eventName === 'workflow_dispatch'
+              ? context.payload.inputs.pr_number
+              : context.issue.number;
             let analysis = '🛡️  IaC Guardian Analysis\n\n';
 
             try {
@@ -56,7 +65,7 @@ jobs:
             }
 
             const { data: comments } = await github.rest.issues.listComments({
-              issue_number: context.issue.number,
+              issue_number: issueNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
             });
@@ -75,7 +84,7 @@ jobs:
               });
             } else {
               await github.rest.issues.createComment({
-                issue_number: context.issue.number,
+                issue_number: issueNumber,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 body: analysis

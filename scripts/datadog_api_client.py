@@ -5,6 +5,7 @@ Queries Datadog REST API for infrastructure metrics, incidents, and cost data
 """
 
 import os
+import re
 import requests
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
